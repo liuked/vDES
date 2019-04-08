@@ -1,9 +1,9 @@
 import paho.mqtt.client as mqtt
 import threading
-import time
 import logging
 import argparse
 import json
+from datetime import datetime
 
 class Data:
     value = 0
@@ -38,7 +38,7 @@ def on_message(client, userdata, msg):
 
 
 def on_publish(client, userdata, mid):
-    logging.debug("published: %d" % mid)
+    logging.debug("published: {:d})".format(mid))
 
 
 def on_disconnect(client, userdata, rc):
@@ -50,9 +50,21 @@ def get_dev_data():
     global devtype
     Data.increase()
     jdata = {
-        "nrg5id": "0x%04X" % id,
-        "devtype": devtype,
-        "value": Data.value
+        "devID": "{:04x}".format(id),
+        "attributes": {
+            "devtype": devtype
+        },
+        "features": {
+            "testdata": {
+                "properties": {
+                    "status": {
+                        "value": Data.value,
+                        "lastMeasured": datetime.utcnow().strftime("%y-%m-%dT%H:%M"),
+                        "units": "u"
+                    }
+                }
+            },
+        },
     }
     return jdata
 
@@ -69,7 +81,7 @@ def eventloop(client):
         jdata = get_dev_data()  # blocking
         logging.info("recorded: {}".format(jdata))
         msginfo = client.publish(pub_topic, json.dumps(jdata), 1)
-        logging.debug("publishing: %d" % msginfo.mid)
+        logging.debug("publishing: {:d}".format(msginfo.mid))
         #time.sleep(1)
         input()
 
@@ -100,7 +112,7 @@ client.connect(broker_host, broker_port, 60)
 
 # start mqtt client
 ready = False
-logging.info("starting mqtt client id: 0x%04X" % id)
+logging.info("starting mqtt client id: {:04X}".format(id))
 threading.Thread(target=mqtt_netloop, args={client}).start()
 
 # start data listener (only when connected)
