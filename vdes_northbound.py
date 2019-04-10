@@ -1,130 +1,144 @@
 import sys, os
 import logging
-from flask import Flask
+from flask import Flask, abort
 from flask_restful import Api, Resource, reqparse
-
 sys.path.append(os.path.abspath(os.path.join("..")))
-from vSON_graph import TopologyGraph, topo
-from common.Def import *
+from vdes_core import vDES
+import traceback
+
+def runrest(api_port, _vdes):
+    global api
+    global app
+    global vdes
+    assert (isinstance(_vdes, vDES))
+    app = Flask(__name__)
+    api = Api(app)
+    vdes = _vdes
+
+    api.add_resource(Groups, "/groups/<string:groupId>")
+    api.add_resource(GroupAggregator, "/groups/<string:groupId>/aggregated")
+    api.add_resource(Devices, "/groups/<string:groupId>/devices/<string:devId>")
+
+    logging.debug("Starting REST interface on port {}".format(api_port))
+    app.run(port=api_port)
 
 
-class RESTfulAPI:
 
-    def __init__(self, api_port):
-        self.app = Flask(__name__)
-        self.api = Api(self.app)
+class Groups(Resource):
 
-        self.api.add_resource(RESTNode, "/topology/nodes/<string:str_ID>")
-        self.api.add_resource(RESTTopo, "/topology")
-
-        logging.debug("Opening a thread for rest API")
-        self.app.run(port=api_port)
-
-
-
-
-
-class RESTTopo(Resource):
-
-    def get(self):
-
-        logging.info("Received GET request for topology")
-        lock.acquire()
+    def get(self, groupId="*"):
+        global vdes
+        logging.warning("Received GET request, not Implemented")
+        vdes.lock.acquire()
         try:
-            res = topo.get_topo_all()
-
-            logging.debug("Building response: {}".format(res))
-            if res == STATUS.TOPO_EMPTY:
-                return "Topology not found", 404
-
-            return res, 200
+            if groupId == "*":
+                return vdes.lvgroups_to_json()
+            if groupId in vdes.lvgroups:
+                return vdes.lvgroups_to_json(groupId)
+            else:
+                abort(404)
         finally:
-            lock.release()
+            vdes.lock.release()
+
+    def post(self, groupId):
+        prs = reqparse.RequestParser()
+        a = prs.parse_args()
+        global vdes
+        logging.warning("Received POST request, not Implemented")
+        vdes.lock.acquire()
+        try:
+            return 501
+        finally:
+            vdes.lock.release()
+
+    def put(self, groupId):
+        prs = reqparse.RequestParser()
+        a = prs.parse_args()
+        logging.warning("Received PUT request, not Implemented")
+        global vdes
+        vdes.lock.acquire()
+        try:
+            return 501
+        finally:
+            vdes.lock.release()
 
 
+    def delete(self, groupId):
+        logging.warning("Received DELETE request, not implemented")
+        global vdes
+        vdes.lock.acquire()
+        try:
+            return 501
+        finally:
+            vdes.lock.release()
 
 
-class RESTNode(Resource):
+class GroupAggregator(Resource):
 
+    def get(self, groupId):
+        global vdes
+        logging.warning("Received GET request, not Implemented")
+        vdes.lock.acquire()
+        try:
+            if groupId in vdes.lvgroups:
+                return vdes.get_lvgroup_aggregated(groupId)
+            else:
+                abort(404)
+        finally:
+            vdes.lock.release()
+
+    def post(self, groupId):
+        logging.warning("Received POST request, not Implemented")
+        return 501
+
+    def put(self, groupId):
+        plogging.warning("Received PUT request, not Implemented")
+        return 501
+
+    def delete(self, groupId):
+        logging.warning("Received DELETE request, not Implemented")
+        return 501
+
+
+class Devices(Resource):
 
     def get(self, str_ID):
-
-        ID = int(str_ID, 0)
-        logging.info("Received GET request for node: {:16X}".format(ID))
-
-        lock.acquire()
+        global vdes
+        logging.warning("Received GET request, not Implemented")
+        vdes.lock.acquire()
         try:
-            res = topo.get_node(ID)
-            logging.debug("Building response: {}".format(res))
-            if res == STATUS.NODE_NOT_FOUND:
-                return "Node not found", 404
-            return res, 200
+            return 501
         finally:
-            lock.release()
-
-
+            vdes.lock.release()
 
     def post(self, str_ID):
-
-        ID = int(str_ID, 0)
         prs = reqparse.RequestParser()
-        prs.add_argument("descr")
-        prs.add_argument("bs")
-        prs.add_argument("signature")
-        prs.add_argument("registered")
         a = prs.parse_args()
-
-        bs = (a['bs'] == u'True')
-        logging.info("Received POST request, {}".format(a))
-
-        lock.acquire()
+        global vdes
+        logging.warning("Received POST request, not Implemented")
+        vdes.lock.acquire()
         try:
-            res = topo.push_node(ID, sign= a["signature"], reg=a["registered"], msg= a["descr"], bs=bs)
-
-            logging.debug("Building response: {}".format(res))
-
-            if res == STATUS.NODE_ALREADY_EXISTENT:
-                return "Node with ID: {:16X} already exist".format(ID), 400
-
-            if res == STATUS.INTERNAL_ERROR:
-                return "Server Error", 500
-
-            return res, 200
+            return 501
         finally:
-            lock.release()
-
+            vdes.lock.release()
 
     def put(self, str_ID):
-
-        ID = int(str_ID, 0)
-
         prs = reqparse.RequestParser()
         a = prs.parse_args()
-        lock.acquire()
+        logging.warning("Received PUT request, not Implemented")
+        global vdes
+        vdes.lock.acquire()
         try:
-            status, node = topo.put_node_info(ID, a)
-
-            if status == STATUS.SUCCESS:
-                return node, 200
-            else:
-                return 'Node not present, unauthorized to add one', 401
+            return 501
         finally:
-            lock.release()
+            vdes.lock.release()
 
 
     def delete(self, str_ID):
-
-        ID = int(str_ID, 0)
-        logging.info("Received DELETE request for node: {:X}".format(ID))
-        lock.acquire()
+        logging.warning("Received DELETE request, not implemented")
+        global vdes
+        vdes.lock.acquire()
         try:
-            data, stat = topo.delete_node(ID)
-            if stat == STATUS.NODE_NOT_FOUND:
-                return "Node not found", 404
-            logging.debug("Building response: {}".format(data))
-            return data, 200
+            return 501
         finally:
-            lock.release()
-
-
-
+            vdes.lock.release()

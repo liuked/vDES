@@ -1,5 +1,5 @@
 import paho.mqtt.client as mqtt
-import logging
+import logging, coloredlogs
 import requests
 import json
 
@@ -10,17 +10,17 @@ def on_connect(client, userdata, flags, rc):
     # Subscribing in on_connect() means that if we lose the connection and
     # reconnect then subscriptions will be renewed.
     client.subscribe("vmcm")
-    logging.debug("subscribed to vmcm")
+    logger.debug("subscribed to vmcm")
 
 # The callback for when a PUBLISH message is received from the server.
 def on_message(client, userdata, msg):
     global ditto
     global policyId
-    #logging.debug("rcvd: "+msg.topic+" "+str(msg.payload))
+    #logger.debug("rcvd: "+msg.topic+" "+str(msg.payload))
     jmsg=json.loads(msg.payload.decode("utf-8"))
-    logging.debug("loaded: {}".format(json.dumps(jmsg)))
+    logger.debug("loaded: {}".format(json.dumps(jmsg)))
     thingId = "org.nrg5:NORM{}".format(jmsg["devID"])   # devID is a string
-    logging.debug((thingId, policyId))
+    logger.debug((thingId, policyId))
 
     jdata = {
         "thingId": thingId,
@@ -29,16 +29,26 @@ def on_message(client, userdata, msg):
             "firmware": "v0.1",
             "software": "v0.1",
             "manufacturer": "Sorbonne Universite",
-            "devtype": ''
+            "devtype": "",
+            "groupId": ""
         },
         "features": {}
     }
 
-    logging.debug("devtype: {}".format(jmsg["attributes"]["devtype"]))
-    jdata["attributes"]["devtype"] = jmsg["attributes"]["devtype"]
-    logging.debug("features: {}".format(jmsg["features"]))
+    if "devtype" in jmsg["attributes"]:
+        logger.debug("devtype: {}".format(jmsg["attributes"]["devtype"]))
+        jdata["attributes"]["devtype"] = jmsg["attributes"]["devtype"]
+    else:
+        logger.error("no devtype field")
+
+    if "groupId" in jmsg["attributes"]:
+        jdata["attributes"]["groupId"] = jmsg["attributes"]["groupId"]
+    else:
+        logger.error("no groupID field")
+
+    logger.debug("features: {}".format(jmsg["features"]))
     for key in jmsg["features"]:
-        logging.debug("[{}]:{}".format(key, jmsg["features"][key]))
+        logger.debug("[{}]:{}".format(key, jmsg["features"][key]))
         jdata["features"][key] = jmsg["features"][key]
 
     # fetch things ID
@@ -47,15 +57,17 @@ def on_message(client, userdata, msg):
     # r = ditto.get(url="https://ditto.eclipse.org/api/2/things", )
     # if r.ok && r.json[items]:
     #     thingid = r.json["items"][0]["thingId"]
-    #     logging.debug("thingID: {})'.format(thingid)
+    #     logger.debug("thingID: {})'.format(thingid)
     # else
-    logging.debug("putting: {}".format(json.dumps(jdata)))
+    logger.debug("putting: {}".format(json.dumps(jdata)))
     r = ditto.put(url="https://ditto.eclipse.org/api/2/things/{}".format(thingId), data=json.dumps(jdata))
-    logging.debug(r)
-    logging.debug(r.text)
+    logger.debug(r)
+    logger.debug(r.text)
 
-logging.basicConfig(level=logging.DEBUG)
-logging.getLogger("requests").setLevel(logging.WARNING)
+coloredlogs.install(level='DEBUG')
+logger = logging.getLogger(__file__.split('/')[-1])
+logger.level = logging.DEBUG
+# logger.getLogger("requests").setLevel(logger.WARNING)
 
 client = mqtt.Client()
 client.on_connect = on_connect
@@ -107,11 +119,11 @@ jpolicy = {
 }
 r = ditto.put(url="https://ditto.eclipse.org/api/2/policies/{}".format(policyId), data=json.dumps(jpolicy))
 if r.ok:
-    logging.info("policy check - OK")
+    logger.info("policy check - OK")
     # Blocking call that processes network traffic, dispatches callbacks and
     # handles reconnecting.
     # Other loop*() functions are available that give a threaded interface and a
     # manual interface.
     client.loop_forever()
 else:
-    logging.error("Unable to connect to eclipse ditto. Exiting")
+    logger.error("Unable to connect to eclipse ditto. Exiting")

@@ -3,6 +3,7 @@ logging.basicConfig(level=logging.DEBUG)
 import sys, os
 from vdes_core import vDES
 sys.path.append(os.path.abspath(os.path.join("..")))
+import vdes_northbound
 
 import threading
 import argparse
@@ -10,11 +11,14 @@ import argparse
 
 ## set log destination
 logging.basicConfig(level=logging.DEBUG)
+rest_port = 1234
 
 
 if __name__ == "__main__":
 
-    vdes = vDES("https://ditto.eclipse.org/api/2/things/", "demo1", "demo")
+    vdes = vDES("https://ditto.eclipse.org", "demo1", "demo")
+
+    threading.Thread(target=vdes_northbound.runrest, args=(rest_port, vdes)).start()
 
     vdes.foreverloop()
     # logging.info("Starting Southbound listener deamon...")
