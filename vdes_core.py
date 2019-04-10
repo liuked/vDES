@@ -37,7 +37,7 @@ class Feature:
             # return the most recent feature
             if last_datetime is not None and last_datetime == other.__timestamp_from_date():
                 return self
-            else
+            else:
                 return other
 
 
