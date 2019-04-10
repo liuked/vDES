@@ -1,115 +1,80 @@
 import requests
 from sseclient import SSEClient
-import time
-from datetime import datetime
-import logging, coloredlogs, traceback
+import logging, coloredlogs
 import threading
 import copy
 import json
+from lvgroup import LVGroup
+from feature import Feature
+from device import Device
 
 coloredlogs.install(level='DEBUG')
 logger = logging.getLogger(__file__.split('/')[-1])
 logger.level = logging.DEBUG
 
-class Feature:
-    name = ""
-    value = 0
-    units = ""
-    last_updated = datetime.min
-
-    def __init__(self, _name, _value, _units, _last_updated):
-        self.name = _name
-        self.value = _value
-        self.units = _units
-        self.last_updated = _last_updated
-
-    def __add__(self, other):
-        try:
-            last_datetime = None
-            assert (isinstance(other, Feature))
-            last_datetime = datetime.fromtimestamp(max(self.__timestamp_from_date(), other.__timestamp_from_date()))
-
-            assert(self.__is_summable(other))
-            return Feature(self.name, self.value+other.value, self.units, last_datetime.strftime("%y-%m-%dT%H:%M:%S"))
-
-        except AssertionError:
-            logging.error("{} and {} are not summable".format(self.to_json(), other.to_json()))
-            # return the most recent feature
-            if last_datetime is not None and last_datetime == other.__timestamp_from_date():
-                return self
-            else:
-                return other
-
-
-    def __timestamp_from_date(self):
-        return time.mktime(datetime.strptime(self.last_updated, "%y-%m-%dT%H:%M:%S").timetuple())
-
-    def __is_summable(self, other):
-        last_timestamp = self.__timestamp_from_date()
-        other_last_timestamp = other.__timestamp_from_date()
-        samename = (self.name == other.name)
-        sameunit = (self.units == other.units)
-        timegap = abs(last_timestamp - other_last_timestamp)
-        sametime = ( timegap < vDES.max_time_gap)
-        logging.debug("[{}] samename? {}; sameunit? {}; sametime? {}(gap{})".format(self.name, samename, sameunit,sametime,timegap))
-        return (samename and sameunit and sametime)
-
-    def to_json(self):
-        return {
-            "name": self.name,
-            "value": self.value,
-            "units": self.units,
-            "last_updated": self.last_updated
-        }
-
-
-class Device:
-    devID = ""
-    groupID = ""
-    position = { "lat": None, "long": None}
-    devtype = ""
-    features = {}  # dict where key is feature name (string)
-
-    def __init__(self, _devID, _groupID, _devtype, _featuresdict):
-        self.devID = _devID
-        self.devtype = _devtype
-        self.groupID = _groupID
-        self.features = _featuresdict
-
-    def to_json(self):
-        jdata = {
-            "devId": self.devID,
-            "groupID": self.groupID,
-            "position": self.position,
-            "devtype": self.devtype,
-            "features": {}
-        }
-
-        for feat in self.features:
-            jdata["features"][feat] = self.features[feat].to_json()
-
-        return jdata
-
-
 
 class vDES:
-    lvgroups = {}   # dict of groups, key is device id, value is device dict
-    vmcmurl=""
-    auth = ""
+    '''
+
+    vDES: {
+        devices: {
+            devID: ->Device(
+                        devID:
+                        groupID:
+                        position: {lat: , long: }
+                        devtype:
+                        features: ->Feature(
+                                        name:
+                                        value:
+                                        units:
+                                        last_updated:
+                                    )
+                     ),
+
+            devID: ->Device(),
+            devID: ->Device(),
+            ...
+        },
+
+        lvgroups: {
+            groupID: ->LVGroup(
+                            groupId:
+                            devices: {
+                                devID: ->Device()
+                                devID: ->Device()
+                                ...
+                            }
+                        ),
+            groupID: ->LVGroup(),
+            groupID: ->LVGroup(),
+            ...
+        }
+    }
+
+    '''
+
     batt_devtype = "battery"
     char_sta_devtype = "charging_sta"
     ev_devtype = "ev"
-    lock = threading.Lock()
+
     max_time_gap = 60  # seconds
 
     def __init__(self, _vmcmurl, user, password):
         self.vmcmurl = _vmcmurl
         self.auth = (user, password)
+        self.devices = {}  # devicsa are stored in device dict and linked in lvgroups
+        self.lvgroups = {}  # dict of groups, key is device id, value is device dict
+        self.groups_changeflag = {}  # dict to keep trace of changes in the groups, used by the aggregator
+        # todo: change groups_changeflag to last_update arg (add timestamp)
+        self.lock = threading.Lock()
 
         dev_list = self.get_vmcm_device_list(self.vmcmurl)
         assert(dev_list!=None)
         for dev in dev_list:
             self.load_device(dev)
+
+        # for g in self.lvgroups:
+        #     logger.debug(json.dumps(self.lvgroups[g].to_json(), indent=4))
         pass
 
     def load_device(self, dev):
@@ -134,7 +99,6 @@ class vDES:
         logger.debug(dev_lst)
         return dev_lst
 
-
     def _SSE_get_features(self, _jobj):
         jfeatures = _jobj["features"]
         rfeatures = {}
@@ -142,7 +106,7 @@ class vDES:
             val = jfeatures[feat]["properties"]["status"]["value"]
             units = jfeatures[feat]["properties"]["status"]["units"]
             last_updated = jfeatures[feat]["properties"]["status"]["lastMeasured"]
-            rfeatures[feat] = Feature(feat, val, units, last_updated)
+            rfeatures[feat] = Feature(feat, val, units, last_updated, self.max_time_gap)
             logger.debug("feat: {}, val: {}{}, time: {}".format(feat, val, units, last_updated))
         return rfeatures
 
@@ -162,6 +126,29 @@ class vDES:
             logger.error("invalid json format")
             raise
 
+    def __remove_device_from_group(self, devID):
+        # retreive groupId from device
+        groupID = self.devices[devID].groupID
+        logger.debug("removing dev.{} from group.{}".format(devID, groupID))
+        group = self.lvgroups[groupID]
+        assert(isinstance(group, LVGroup))
+        group.devs.pop(devID)
+
+    def __link_device_to_group(self, devID):
+        # retreive groupId from device
+        groupID = self.devices[devID].groupID
+        #link it to new group
+        if groupID not in self.lvgroups:
+            logger.debug("creating group{}".format(groupID))
+            new_group = LVGroup(groupID)
+            self.lvgroups[groupID] = new_group  # create a new group
+
+        group = self.lvgroups[groupID]
+        assert (isinstance(group, LVGroup))
+        logger.debug("assigning dev.{} to group.{}".format(devID, groupID))
+        group.devs[devID] = self.devices[devID]  # link into group dict
+        pass
+
     def _put_device(self, devID, features, attributes):
         try:
             assert ("devtype" in attributes)
@@ -172,28 +159,30 @@ class vDES:
             devtype = attributes["devtype"]
             assert(devtype is not None)
 
+            # save the device info in memory, just update if existing
             self.lock.acquire()
-            if groupID not in self.lvgroups:
-                self.lvgroups[groupID] = {}  # create a new dict for devices
+            if devID in self.devices:
+                dev = self.devices[devID]
+                assert (isinstance(dev, Device))
+                logger.debug("updating features on dev.{}".format(devID))
+                if groupID != self.devices[devID].groupID:
+                    self.__remove_device_from_group(devID)
+                dev.put_features(features)
+                dev.put_attributes(attributes)
+                self.__link_device_to_group(devID)
+            else:
+                logger.debug("creating dev.{}".format(devID))
+                new_dev = Device(devID, groupID, devtype, features)  # create device
+                self.devices[devID] = new_dev  # add to dev dict
+                self.__link_device_to_group(devID)
 
-            new_dev = Device(devID, groupID, devtype, features)
-            self.lvgroups[groupID][devID] = new_dev
-            pass
+            self.groups_changeflag[groupID] = True
+
         except AssertionError as e:
-            logging.error("skipping {} for not being complete".format(devID))
+            logger.error("skipping {} for not being complete".format(devID))
             pass
         finally:
             self.lock.release()
-
-    def __group_to_json(self, groupId):
-        assert (groupId in self.lvgroups)
-        jdata = {
-            "groupId": groupId,
-            "devices": {}
-        }
-        for dev in self.lvgroups[groupId]:
-            jdata["devices"][dev] = self.lvgroups[groupId][dev].to_json()
-        return jdata
 
     def lvgroups_to_json(self, groupId="*"):
         jdata = {
@@ -201,39 +190,39 @@ class vDES:
         }
         if groupId == "*":
             for group in self.lvgroups:
-                jdata["groups"][group] = self.__group_to_json(group)
+                jdata["groups"][group] = self.lvgroups[group].to_json()
         else:
             if groupId in self.lvgroups:
-                jdata["groups"][groupId] = self.__group_to_json(groupId)
+                jdata["groups"][groupId] = self.lvgroups[groupId].to_json()
 
         return jdata
 
     def __sum_group_features(self, groupId):
         group = self.lvgroups[groupId]
         gr_feat_obj = {}
-        for dev in group:
-            features = group[dev].features
+        for dev in group.devs:
+            features = group.devs[dev].features
             for feat in features:
                 if feat not in gr_feat_obj:
                     gr_feat_obj[feat] = copy.copy(features[feat])
-                    logging.debug("created group feature from dev{}, val{} -> {}".format(dev, features[feat].value, gr_feat_obj[feat].to_json()))
+                    logger.debug("created group feature from dev{}, val{} -> {}".format(dev, features[feat].value, gr_feat_obj[feat].to_json()))
                 else:
                     gr_feat_obj[feat] = gr_feat_obj[feat]+features[feat]
-                    logging.debug("added feature from dev{}, val{} -> {}".format(dev, features[feat].value, gr_feat_obj[feat].to_json()))
+                    logger.debug("added feature from dev{}, val{} -> {}".format(dev, features[feat].value, gr_feat_obj[feat].to_json()))
 
         return gr_feat_obj
 
     def __get_devtypes_count_grp(self, groupId):
         group = self.lvgroups[groupId]
         devtypes_dict = {}
-        for dev in group:
-            devtype = group[dev].devtype
+        for dev in group.devs:
+            devtype = group.devs[dev].devtype
             if devtype not in devtypes_dict:
                 devtypes_dict[devtype] = 1
-                logging.debug("addedd devtype {} from dev{}".format(devtype, dev))
+                logger.debug("addedd devtype {} from dev{}".format(devtype, dev))
             else:
                 devtypes_dict[devtype] = devtypes_dict[devtype] +1
-                logging.debug("+1 on devtype {} from dev{}".format(devtype, dev))
+                logger.debug("+1 on devtype {} from dev{}".format(devtype, dev))
         return devtypes_dict
 
     def get_lvgroup_aggregated(self, groupId):
@@ -251,7 +240,7 @@ class vDES:
                 jdata["features"][feat] = grp_feats_obj[feat].to_json()
             return jdata
         except AssertionError:
-            logging.error("group "+groupId+" not found")
+            logger.error("group "+groupId+" not found")
             raise KeyError
 
     def foreverloop(self):

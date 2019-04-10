@@ -18,7 +18,7 @@ def on_message(client, userdata, msg):
     global policyId
     #logger.debug("rcvd: "+msg.topic+" "+str(msg.payload))
     jmsg=json.loads(msg.payload.decode("utf-8"))
-    logger.debug("loaded: {}".format(json.dumps(jmsg)))
+    logger.debug("loaded: {}".format(json.dumps(jmsg), indent=2, sort_keys=True))
     thingId = "org.nrg5:NORM{}".format(jmsg["devID"])   # devID is a string
     logger.debug((thingId, policyId))
 
@@ -59,7 +59,7 @@ def on_message(client, userdata, msg):
     #     thingid = r.json["items"][0]["thingId"]
     #     logger.debug("thingID: {})'.format(thingid)
     # else
-    logger.debug("putting: {}".format(json.dumps(jdata)))
+    logger.debug("putting: {}".format(json.dumps(jdata), indent=2, sort_keys=True))
     r = ditto.put(url="https://ditto.eclipse.org/api/2/things/{}".format(thingId), data=json.dumps(jdata))
     logger.debug(r)
     logger.debug(r.text)

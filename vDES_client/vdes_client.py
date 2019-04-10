@@ -99,7 +99,7 @@ def eventloop(client):
 
     while(stopf==False):
         jdata = get_dev_data()  # blocking
-        logger.info("recorded: {}".format(jdata))
+        logger.info("recorded: {}".format(json.dumps(jdata), indent=2, sort_keys=True))
         msginfo = client.publish(pub_topic, json.dumps(jdata), 1)
         logger.debug("publishing: {:d}".format(msginfo.mid))
         #time.sleep(1)
