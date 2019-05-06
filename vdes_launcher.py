@@ -12,11 +12,13 @@ import argparse
 ## set log destination
 logging.basicConfig(level=logging.DEBUG)
 rest_port = 1234
+# dittourl="http://localhost:8080"
+dittourl="http://ditto.eclipse.org"
 
 
 if __name__ == "__main__":
 
-    vdes = vDES("https://ditto.eclipse.org", "demo1", "demo")
+    vdes = vDES(dittourl, "demo1", "demo")
 
     threading.Thread(target=vdes_northbound.runrest, args=(rest_port, vdes)).start()
 

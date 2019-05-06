@@ -2,15 +2,22 @@ import paho.mqtt.client as mqtt
 import logging, coloredlogs
 import requests
 import json
+import websocket
+import threading
+
+coloredlogs.install(level='DEBUG')
+logger = logging.getLogger(__file__.split('/')[-1])
+logger.level = logging.DEBUG
+# logger.getLogger("requests").setLevel(logger.WARNING)
 
 # The callback for when the client receives a CONNACK response from the server.
 def on_connect(client, userdata, flags, rc):
-    print("Connected with result code "+str(rc))
+    logger.debug("Connected with result code "+str(rc))
 
     # Subscribing in on_connect() means that if we lose the connection and
     # reconnect then subscriptions will be renewed.
-    client.subscribe("vmcm")
-    logger.debug("subscribed to vmcm")
+    client.subscribe("vdes/data")
+    logger.debug("subscribed to vdes/data")
 
 # The callback for when a PUBLISH message is received from the server.
 def on_message(client, userdata, msg):
@@ -56,7 +63,7 @@ def on_message(client, userdata, msg):
     # logging.DEBUG("searchfilter: {})'.format(searchfilter)
     # r = ditto.get(url="https://ditto.eclipse.org/api/2/things", )
     # if r.ok && r.json[items]:
-    #     thingid = r.json["items"][0]["thingId"]
+    #     thingid = r.json["items"][0]["thingId"]cd ..
     #     logger.debug("thingID: {})'.format(thingid)
     # else
     logger.debug("putting: {}".format(json.dumps(jdata), indent=2, sort_keys=True))
@@ -64,66 +71,102 @@ def on_message(client, userdata, msg):
     logger.debug(r)
     logger.debug(r.text)
 
-coloredlogs.install(level='DEBUG')
-logger = logging.getLogger(__file__.split('/')[-1])
-logger.level = logging.DEBUG
-# logger.getLogger("requests").setLevel(logger.WARNING)
+def ws_on_message(ws, message):
+    logger.debug(message)
 
-client = mqtt.Client()
-client.on_connect = on_connect
-client.on_message = on_message
+def ws_on_error(ws, error):
+    logger.error(error)
 
-client.connect("localhost", 1883, 60)
+def ws_on_close(ws):
+    logger.info("### ws_closed ###")
 
-# open req session to eclipse ditto
-ditto = requests.Session()
-ditto.auth=requests.auth.HTTPBasicAuth("demo1", "demo")
+def ws_on_open(ws):
+    logger.info("### ws_opened ###")
 
-# create policy
-global policyId
-policyId =  "org.nrg5:NORMPOLICY"
-jpolicy = {
-    "policyId": policyId,
-    "entries": {
-        "DEFAULT": {
-            "subjects": {
-                "nginx:demo1": {
-                    "type": "generated"
-                }
-            },
-            "resources": {
-                "policy:/": {
-                    "grant": [
-                        "READ",
-                        "WRITE"
-                    ],
-                    "revoke": []
+
+local_mqtt_host = "localhost"
+local_mqtt_port = 1883
+# dittourl="http://localhost:8080"
+dittourl="http://ditto.eclipse.org"
+#wshost="localhost:8080"
+wsversioni = "/2"
+
+if __name__ == "__main__":
+
+    # connect to local MQTT broker to communicate with other clients in the device
+    mqttclient = mqtt.Client()
+    mqttclient.on_connect = on_connect
+    mqttclient.on_message = on_message
+    mqttclient.connect(local_mqtt_host, local_mqtt_port, 60)
+
+    # open req session to eclipse ditto
+    ditto = requests.Session()
+    ditto.auth=requests.auth.HTTPBasicAuth("demo1", "demo")
+
+    # create policy
+    global policyId
+    policyId =  "org.nrg5:NORMPOLICY"
+    jpolicy = {
+        "policyId": policyId,
+        "entries": {
+            "DEFAULT": {
+                "subjects": {
+                    "nginx:demo1": {
+                        "type": "generated"
+                    }
                 },
-                "thing:/": {
-                    "grant": [
-                        "READ",
-                        "WRITE"
-                    ],
-                    "revoke": []
-                },
-                "message:/": {
-                    "grant": [
-                        "READ",
-                        "WRITE"
-                    ],
-                    "revoke": []
+                "resources": {
+                    "policy:/": {
+                        "grant": [
+                            "READ",
+                            "WRITE"
+                        ],
+                        "revoke": []
+                    },
+                    "thing:/": {
+                        "grant": [
+                            "READ",
+                            "WRITE"
+                        ],
+                        "revoke": []
+                    },
+                    "message:/": {
+                        "grant": [
+                            "READ",
+                            "WRITE"
+                        ],
+                        "revoke": []
+                    }
                 }
             }
         }
     }
-}
-r = ditto.put(url="https://ditto.eclipse.org/api/2/policies/{}".format(policyId), data=json.dumps(jpolicy))
-if r.ok:
-    logger.info("policy check - OK")
-    # Blocking call that processes network traffic, dispatches callbacks and
-    # handles reconnecting.
-    # Other loop*() functions are available that give a threaded interface and a
-    # manual interface.
-    client.loop_forever()
-else:
-    logger.error("Unable to connect to eclipse ditto. Exiting")
+    r = ditto.put(url=dittourl+"/api/2/policies/{}".format(policyId), data=json.dumps(jpolicy))
+    if r.ok:
+        logger.info("policy check - OK")
+        # Blocking call that processes network traffic, dispatches callbacks and
+        # handles reconnecting.
+        # Other loop*() functions are available that give a threaded interface and a
+        # manual interface.
+        threading.Thread(target=mqttclient.loop_forever).start()
+    else:
+        logger.error("{} {} - Unable to connect to eclipse ditto. Exiting".format(r.status_code, r.reason))
+        exit(-1)
+
+    while True:
+        pass
+
+    ### connect to ditto via websocket
+    # websocket.enableTrace(True)  # for debug prompt
+    # wsurl = "ws://"+wshost+"/ws/2"
+    #
+    # ws = websocket.WebSocketApp(wsurl,
+    #                             on_message=ws_on_message,
+    #                             on_error=ws_on_error,
+    #                             on_close=ws_on_close,
+    #                             on_open=ws_on_open)
+    # # add auth
+    # dummy = requests.Request()
+    # ws.header.append("Authorization: {}".format(ditto.auth(dummy).headers['Authorization']))
+    # ws.run_forever(origin="vmcm_client")
+

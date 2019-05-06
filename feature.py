@@ -9,9 +9,11 @@ logger.level = logging.DEBUG
 
 class Feature:
 
-    def __init__(self, _name, _value, _units, _last_updated, _max_time_gap):
+    def __init__(self, _name, _value, _units, _last_updated, _max_time_gap, _maxval, _minval):
         self.name = _name
         self.value = _value
+        self.maxval = _maxval
+        self.minval = _minval
         self.units = _units
         self.last_updated = _last_updated
         self.max_time_gap = _max_time_gap
@@ -22,7 +24,7 @@ class Feature:
             assert (isinstance(other, Feature))
             last_datetime = max(self.__timestamp_from_date(), other.__timestamp_from_date())
             assert(self.__is_summable(other))
-            return Feature(self.name, self.value+other.value, self.units, datetime.fromtimestamp(last_datetime).strftime("%y-%m-%dT%H:%M:%S"), self.max_time_gap)
+            return Feature(self.name, self.value+other.value, self.units, datetime.fromtimestamp(last_datetime).strftime("%y-%m-%dT%H:%M:%S"), self.max_time_gap, self.maxval+other.maxval, self.minval+other.minval)
 
         except AssertionError:
             logger.error("{} and {} are not summable".format(self.to_json(), other.to_json()))
@@ -50,6 +52,8 @@ class Feature:
     def to_json(self):
         return {
             "name": self.name,
+            "maxval": self.maxval,
+            "minval": self.minval,
             "value": self.value,
             "units": self.units,
             "last_updated": self.last_updated

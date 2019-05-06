@@ -56,6 +56,7 @@ class vDES:
     batt_devtype = "battery"
     char_sta_devtype = "charging_sta"
     ev_devtype = "ev"
+    policyId =  "org.nrg5:NORMPOLICY"
 
     max_time_gap = 60  # seconds
 
@@ -68,14 +69,31 @@ class vDES:
         # todo: change groups_changeflag to last_update arg (add timestamp)
         self.lock = threading.Lock()
 
-        dev_list = self.get_vmcm_device_list(self.vmcmurl)
-        assert(dev_list!=None)
-        for dev in dev_list:
-            self.load_device(dev)
+        # open req session to eclipse ditto
+        self.ditto = requests.Session()
+        self.ditto.auth = requests.auth.HTTPBasicAuth("demo1", "demo")
 
+        if not self._check_ditto_policy():
+            exit(-1)
+
+        dev_list = self.get_vmcm_device_list(self.vmcmurl)
+        if dev_list is not None:
+            for dev in dev_list:
+                self.load_device(dev)
+        else:
+            logger.info("no devices found, yet")
         # for g in self.lvgroups:
         #     logger.debug(json.dumps(self.lvgroups[g].to_json(), indent=4))
         pass
+
+    def _check_ditto_policy(self):
+        r = self.ditto.get(url=self.vmcmurl+"/api/2/policies/{}".format(self.policyId))
+        if r.ok:
+            logger.info("{} {}".format(r.status_code, r.reason))
+            return True
+        else:
+            logger.error("{} {}".format(r.status_code, r.reason))
+            exit(-1)
 
     def load_device(self, dev):
         devID = self._SSE_get_devID(dev)
@@ -85,15 +103,17 @@ class vDES:
         pass
 
     def get_vmcm_device_list(self, vmcmurl):
-        # open req session to eclipse ditto
-        ditto = requests.Session()
-        ditto.auth = requests.auth.HTTPBasicAuth("demo1", "demo")
 
         # send search request for field "devtype" battery or charging stations
-        r = ditto.get(url=vmcmurl+'/api/2/search/things?filter=or(eq(attributes/devtype,"{}"),'\
+        r = self.ditto.get(url=vmcmurl+'/api/2/search/things?filter=or(eq(attributes/devtype,"{}"),'\
                                   'eq(attributes/devtype,"{}"), eq(attributes/devtype,"{}"))'.format(self.batt_devtype,
                                                                                                      self.char_sta_devtype,
                                                                                                      self.ev_devtype))
+        if not r.ok:
+            logger.error("{} {}".format(r.status_code, r.reason))
+            if r.status_code == 404:
+                return None
+            exit(-1)
         jdata = json.loads(r.text)
         dev_lst = jdata["items"]
         logger.debug(dev_lst)
@@ -102,13 +122,26 @@ class vDES:
     def _SSE_get_features(self, _jobj):
         jfeatures = _jobj["features"]
         rfeatures = {}
+
         for feat in jfeatures:
-            val = jfeatures[feat]["properties"]["status"]["value"]
-            units = jfeatures[feat]["properties"]["status"]["units"]
-            last_updated = jfeatures[feat]["properties"]["status"]["lastMeasured"]
-            rfeatures[feat] = Feature(feat, val, units, last_updated, self.max_time_gap)
-            logger.debug("feat: {}, val: {}{}, time: {}".format(feat, val, units, last_updated))
+            try:
+                assert ("properties" in jfeatures[feat])
+                assert ("status" in jfeatures[feat]["properties"])
+                assert ("maxval" in jfeatures[feat]["properties"])
+                assert ("minval" in jfeatures[feat]["properties"])
+                val = jfeatures[feat]["properties"]["status"]["value"]
+                units = jfeatures[feat]["properties"]["status"]["units"]
+                last_updated = jfeatures[feat]["properties"]["status"]["lastMeasured"]
+                maxval = jfeatures[feat]["properties"]["maxval"]
+                minval = jfeatures[feat]["properties"]["minval"]
+                rfeatures[feat] = Feature(feat, val, units, last_updated, self.max_time_gap, maxval, minval)
+                logger.debug("feat: {}, val: {}{}, time: {}".format(feat, val, units, last_updated))
+
+            except AssertionError as e:
+                logger.error("key error in feature: '"+feat+"': "+json.dumps(jfeatures[feat]))
+                pass
         return rfeatures
+
 
     def _SSE_get_attributes(self, _jobj):
         attributes = _jobj["attributes"]
@@ -245,15 +278,16 @@ class vDES:
 
     def foreverloop(self):
         # connect to ditto through sse
-            messages = SSEClient(self.vmcmurl+"/api/2/things/", auth=self.auth)
-            for msg in messages:
-                if msg.data:
-                    logger.debug("event: {}. data: {}. id: {}. retry: {}".format(msg.event, msg.data, msg.id, msg.retry))
-                    jdata = json.loads(msg.data)
-                    self.load_device(jdata)
-                # keep listening for events (new devices, new data)
-                # update aggregated data every x minute
-                pass
+        logger.info("subscribed to: "+self.vmcmurl+"/api/2/things/")
+        messages = SSEClient(self.vmcmurl+"/api/2/things/", auth=self.auth)
+        for msg in messages:
+            if msg.data:
+                logger.debug("event: {}. data: {}. id: {}. retry: {}".format(msg.event, msg.data, msg.id, msg.retry))
+                jdata = json.loads(msg.data)
+                self.load_device(jdata)
+            # keep listening for events (new devices, new data)
+            # update aggregated data every x minute
+            pass
 
 
 

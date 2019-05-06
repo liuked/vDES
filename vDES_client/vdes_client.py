@@ -42,7 +42,7 @@ def on_publish(client, userdata, mid):
 
 
 def on_disconnect(client, userdata, rc):
-    logger.warning("{} nor implemented".fromat(__name__))
+    logger.warning("{} not implemented".format(__name__))
 
 
 def get_dev_data():
@@ -62,7 +62,9 @@ def get_dev_data():
                         "value": Data.value,
                         "lastMeasured": datetime.utcnow().strftime("%y-%m-%dT%H:%M:%S"),
                         "units": "kW"
-                    }
+                    },
+                    "maxval": 200,
+                    "minval": -10
                 }
             },
             "ReactivePower": {
@@ -71,7 +73,9 @@ def get_dev_data():
                         "value": Data.value,
                         "lastMeasured": datetime.utcnow().strftime("%y-%m-%dT%H:%M:%S"),
                         "units": "kW"
-                    }
+                    },
+                    "maxval": 30,
+                    "minval": -2
                 }
             },
             "StateOfCharge": {
@@ -79,8 +83,10 @@ def get_dev_data():
                     "status": {
                         "value": Data.value,
                         "lastMeasured": datetime.utcnow().strftime("%y-%m-%dT%H:%M:%S"),
-                        "units": "%"
-                    }
+                        "units": "kWh"
+                    },
+                    "maxval": 500,
+                    "minval": 0
                 }
             },
         },
@@ -109,14 +115,14 @@ def eventloop(client):
 coloredlogs.install(level='INFO')
 logger = logging.getLogger(__file__.split('/')[-1])
 logger.level = logging.INFO
-pub_topic = "vmcm"
+pub_topic = "vdes/data"
 devtype = "battery"
 stopf = False
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-p", "--port", dest="broker_port", help="broker port", metavar="<port>", type=int, default=1883)
-parser.add_argument("-H", "--host", dest="broker_host", help="broker host IP", type=str,  metavar="<port>", default="localhost")
-parser.add_argument("-t", "--tipiclst", dest="topiclst", help="subscription topics", type=str, nargs="*",  metavar="<topic1> <topic2> ...", default=["vdes"])
+parser.add_argument("-H", "--host", dest="broker_host", help="broker host", type=str,  metavar="<url/ip>", default="localhost")
+parser.add_argument("-t", "--tipiclst", dest="topiclst", help="subscription topics", type=str, nargs="*",  metavar="<topic1> <topic2> ...", default=["vdes/commands"])
 parser.add_argument("-i", "--id", dest="id", help="client id", metavar="<id>", type=int, default=0)
 parser.add_argument("-g", "--group", dest="groupId", help="Lov Voltage Group ID", metavar="<group_id>", type=str, default="")
 args = parser.parse_args()
