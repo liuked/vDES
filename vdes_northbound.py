@@ -5,6 +5,7 @@ sys.path.append(os.path.abspath(os.path.join("..")))
 from vdes_core import vDES
 import time
 import logging, coloredlogs
+import json
 
 coloredlogs.install(level='DEBUG')
 logger = logging.getLogger(__file__.split('/')[-1])
@@ -21,6 +22,7 @@ def runrest(api_port, _vdes):
 
     api.add_resource(Groups, "/groups/<string:groupId>")
     api.add_resource(GroupAggregator, "/groups/<string:groupId>/aggregated")
+    api.add_resource(GroupMessanger, "/groups/<string:groupId>/setpoint")
     api.add_resource(GroupAggregatorUpdate, "/groups/<string:groupId>/aggregated-update")
     api.add_resource(Devices, "/groups/<string:groupId>/devices/<string:devId>")
 
@@ -53,6 +55,54 @@ class Groups(Resource):
             return 501
         finally:
             vdes.lock.release()
+
+
+class GroupMessanger(Resource):
+
+    '''
+    vDES receives from vESR json data in the format:
+
+    {
+        id : "F1",(char 256)
+        pSet : 400, (double)
+        qSet : 200, (double)
+        timestamp : 18472876918 (uint64)//unixtimestamp
+    }
+
+    //message for accumulated pSet and qSet for F1
+    '''
+    def put(self, groupId):
+        prs = reqparse.RequestParser()
+        prs.add_argument("id")
+        prs.add_argument("pSet")
+        prs.add_argument("qSet")
+        prs.add_argument("timestamp")
+        a = prs.parse_args()
+
+        if a.id != groupId:
+            logger.error("group id doesn't correspond")
+            abort(400, descriprion="unmatching groupID")
+
+        # prepare json object
+        jmsg = {
+            'devId': a.id,
+            'P': a.pSet,
+            'Q': a.qSet,
+            'timestamp': a.timestamp
+        }
+
+        vdes.lock.acquire()
+        try:
+            if id in vdes.lvgroups:
+                group = vdes.lvgroups[id]
+                for dev in group.devs:
+                    vdes.send_message_to_dev(dev, jmsg)
+
+            else:
+                abort(404)
+        finally:
+            vdes.lock.release()
+
 
 
 class GroupAggregator(Resource):

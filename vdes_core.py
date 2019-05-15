@@ -56,7 +56,7 @@ class vDES:
     batt_devtype = "battery"
     char_sta_devtype = "charging_sta"
     ev_devtype = "ev"
-    policyId =  "org.nrg5:NORMPOLICY"
+    policyId =  "org.nrg5:NORM0001"
 
     max_time_gap = 60  # seconds
 
@@ -66,14 +66,17 @@ class vDES:
         self.devices = {}  # devicsa are stored in device dict and linked in lvgroups
         self.lvgroups = {}  # dict of groups, key is device id, value is device dict
         self.groups_changeflag = {}  # dict to keep trace of changes in the groups, used by the aggregator
-        # todo: change groups_changeflag to last_update arg (add timestamp)
+        # todo: change groups_changeflag to last_update arg of lvgroup (add timestamp in lvgroup)
         self.lock = threading.Lock()
 
         # open req session to eclipse ditto
         self.ditto = requests.Session()
-        self.ditto.auth = requests.auth.HTTPBasicAuth("demo1", "demo")
+        self.ditto.auth = requests.auth.HTTPBasicAuth(user, password)
 
-        if not self._check_ditto_policy():
+        # if not self._check_ditto_policy():
+        #     exit(-1)
+
+        if not self._check_ditto_things():
             exit(-1)
 
         dev_list = self.get_vmcm_device_list(self.vmcmurl)
@@ -85,6 +88,15 @@ class vDES:
         # for g in self.lvgroups:
         #     logger.debug(json.dumps(self.lvgroups[g].to_json(), indent=4))
         pass
+
+    def _check_ditto_things(self):
+        r = self.ditto.get(url=self.vmcmurl + "/api/2/things?ids=org.nrg5:*")
+        if r.ok:
+            logger.info("{} {}".format(r.status_code, r.reason))
+            return True
+        else:
+            logger.error("{} {}".format(r.status_code, r.reason))
+            exit(-1)
 
     def _check_ditto_policy(self):
         r = self.ditto.get(url=self.vmcmurl+"/api/2/policies/{}".format(self.policyId))
@@ -275,6 +287,11 @@ class vDES:
         except AssertionError:
             logger.error("group "+groupId+" not found")
             raise KeyError
+
+    def send_message_to_dev(self, devId, jmsg):
+        msg = json.dumps(jmsg)
+        logger.debug("sending to {}: {}".format(devId, msg))
+        pass
 
     def foreverloop(self):
         # connect to ditto through sse
