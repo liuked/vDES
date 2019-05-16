@@ -50,7 +50,7 @@ def get_dev_data():
     global devtype
     Data.increase()
     jdata = {
-        "devID": "{:04x}".format(id),
+        "devID": "{:04X}".format(id),
         "attributes": {
             "devtype": devtype,
             "groupId": groupId

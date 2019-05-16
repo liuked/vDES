@@ -13,12 +13,12 @@ import argparse
 logging.basicConfig(level=logging.DEBUG)
 rest_port = 1234
 # dittourl="http://localhost:8080"
-# dittourl="http://ditto.eclipse.org"
-dittourl="http://10.100.1.123:8080"
-# usr = "demo1"
-# psw = "demo"
-usr = "ditto"
-psw = "ditto"
+dittourl="http://ditto.eclipse.org"
+# dittourl="http://10.100.1.123:8080"
+usr = "demo1"
+psw = "demo"
+# usr = "ditto"
+# psw = "ditto"
 
 if __name__ == "__main__":
 

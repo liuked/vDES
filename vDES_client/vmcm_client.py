@@ -18,6 +18,8 @@ def on_connect(client, userdata, flags, rc):
     # reconnect then subscriptions will be renewed.
     client.subscribe("vdes/data")
     logger.debug("subscribed to vdes/data")
+    client.subscribe("/vMCM_Update")
+    logger.debug("subscribed to vMCM_Update")
 
 # The callback for when a PUBLISH message is received from the server.
 def on_message(client, userdata, msg):

@@ -13,13 +13,17 @@ logger = logging.getLogger(__file__.split('/')[-1])
 logger.level = logging.DEBUG
 
 
+def cmp(a, b):
+    return (a > b) - (a < b)
+
+
 class vDES:
     '''
 
     vDES: {
         devices: {
             devID: ->Device(
-                        devID:
+                        devID: (int)
                         groupID:
                         position: {lat: , long: }
                         devtype:
@@ -57,6 +61,11 @@ class vDES:
     char_sta_devtype = "charging_sta"
     ev_devtype = "ev"
     policyId =  "org.nrg5:NORM0001"
+    thing_prefix = "org.nrg5:NORM"
+    P_feature_name = "ActivePower"
+    Q_feature_name = "ReactivePower"
+    setpoint_p_tolerance = 0.1
+    setpoint_q_tolerance = 0.1
 
     max_time_gap = 60  # seconds
 
@@ -290,8 +299,184 @@ class vDES:
 
     def send_message_to_dev(self, devId, jmsg):
         msg = json.dumps(jmsg)
+        # if devId != jmsg['devId']:
+        #     logger.error("devId doesn't match the data content")
+        #     return -1
+        thingId ="{}{:04X}".format(self.thing_prefix, devId)
         logger.debug("sending to {}: {}".format(devId, msg))
+
+        r = self.ditto.post(url=self.vmcmurl + "/api/2/things/"+thingId+"/inbox/messages/setpoint")
+        if r.ok:
+            logger.info("{} {}".format(r.status_code, r.reason))
+            return 0
+        else:
+            logger.error("{} {}".format(r.status_code, r.reason))
+            return -1
         pass
+
+    def _get_setpoint_deltas(self, groupId, P, Q):
+
+        if groupId not in self.lvgroups:
+            return None, None, None
+
+        grp_feats_obj = self.__sum_group_features(groupId)
+        group = self.lvgroups[groupId]
+
+        if self.P_feature_name in grp_feats_obj:
+            dP = P - grp_feats_obj[self.P_feature_name].value
+        else:
+            logger.warning("No feature found for active power P with name '{}'".format(self.P_feature_name))
+            dP = P
+
+        if self.Q_feature_name in grp_feats_obj:
+            dQ = Q - grp_feats_obj[self.Q_feature_name].value
+        else:
+            logger.warning("No feature found for reactive power Q with name '{}'".format(self.Q_feature_name))
+            dQ = Q
+
+        return dP, dQ
+
+    def _get_availble_flexibility(self, devId, feature, sign):
+        if devId not in self.devices:
+            return None, None, None
+
+        device = self.devices[devId]
+        flex = 0
+
+        if feature in device.features:
+            if sign > 0: # flexibility to increase
+                flex = device.features[feature].maxval - device.features[feature].value
+            else:
+                if sign < 0:  # flexibility to decrease (must be negative):
+                    flex = device.features[feature].minval - device.features[feature].value
+        else:
+            logger.warning("No feature found in {} for '{}'".format(devId, feature))
+            flex = 0
+
+        unit = ""
+        if flex:
+            unit = device.features[self.P_feature_name].units
+
+        logger.debug("dev {}, has {}{} flexibility for feature '{}'".format(devId, flex, unit, feature))
+
+        return flex
+
+
+    def _get_new_setpoint(self, devId, feature, delta):
+        if devId not in self.devices:
+            return None
+
+        device = self.devices[devId]
+        sp = None
+
+        if feature in device.features:
+            if delta > 0: # flexibility to increase
+                if delta >= (device.features[feature].maxval - device.features[feature].value):
+                    sp = device.features[feature].value + delta
+            else:
+                if delta < 0:  # flexibility to decrease (must be negative):
+                    if delta >= (device.features[feature].minval - device.features[feature].value):
+                        sp = device.features[feature].value + delta
+        else:
+            logger.warning("No feature found in {} for '{}'".format(devId, feature))
+            sp = None
+
+        unit = ""
+        if sp:
+            unit = device.features[self.P_feature_name].units
+
+        logger.debug("new setpoint for feature '{}' in dev {}: {}{}".format(feature, devId, sp, unit))
+
+        return sp
+
+    def _allocate_power_deltas(self, groupId, dP, dQ):
+        if groupId not in self.lvgroups:
+            logger.error("group not in list")
+            return None
+        group = self.lvgroups[groupId]
+
+        Ptba = dP # active  to be assigned
+        Qtba = dQ # reactive power to be assigned
+
+        power_allocation = {}
+
+        # for dev in group.devs:
+        #     power_allocation[dev] = {}
+        #     power_allocation[dev]['P'] = self._get_new_setpoint(dev, self.P_feature_name, dP)  # return the P setpoint given a P delta
+        #     logging.debug("Allocated {} Active Power to dev {}. Remaining {}".format(dP, dev, 0))
+        #     power_allocation[dev]['Q'] = self._get_new_setpoint(dev, self.Q_feature_name, dQ)  # return the P setpoint given a P delta
+        #     logging.debug("Allocated {} Active Power to dev {}. Remaining {}".format(dP, dev, 0))
+
+        #TODO add meaningful algorithm to distribute power delta
+
+        power_allocation = {}
+        for dev in group.devs:
+            power_allocation[dev] = {}
+            if abs(Ptba) > self.setpoint_p_tolerance:
+                aPf  = self._get_availble_flexibility(dev, self.P_feature_name, cmp(dP,0)) # return the power that could be allocated according to the sign (1: positive, -1=negative)
+                if aPf is not 0:
+                    if abs(Ptba) > abs(aPf):
+                        Pd = Ptba
+                    else:
+                        Pd = aPf
+                    power_allocation[dev]['P'] = self._get_new_setpoint(dev, self.P_feature_name, Pd) # return the P setpoint given a P delta
+                    Ptba = Ptba - Pd
+                    logging.debug("Allocated {} Active Power to dev {}. Remaining {}".format(Pd, dev, Ptba))
+                    # the power allocation values are dictionaries with a P and Q keys indicating the future setpoints for P and Q
+
+            if abs(Qtba) > self.setpoint_q_tolerance:
+                aQf = self._get_availble_flexibility(dev, self.Q_feature_name, cmp(dQ,0))  # return the power that could be allocated according to the sign (1: positive, -1=negative)
+                if aQf is not 0:
+                    if abs(Qtba) > abs(aQf):
+                        Qd = Qtba
+                    else:
+                        Qd = aQf
+                    power_allocation[dev]['Q'] = self._get_new_setpoint(dev, self.Q_feature_name, Qd)  # return the P setpoint given a P delta
+                    Qtba = Qtba - Qd
+                    logging.debug("Allocated {} Rective Power to dev {}. Remaining {}".format(Qd, dev, Qtba))
+
+        if abs(Ptba) > self.setpoint_p_tolerance :
+            logging.warning("Not enough Active power flexibility. Remaining {}".format(Ptba))
+            return -1
+        if abs(Qtba) > self.setpoint_q_tolerance:
+            logging.warning("Not enough Reactive power flexibility. Remaining {}".format(Qtba))
+            return -1
+
+        return power_allocation
+
+
+    def resolve_aggregated_setpoint(self, groupId, P, Q, ts):
+        #FIXME how does timestamp influence this?
+        [deltaP, deltaQ] = self._get_setpoint_deltas(groupId, P, Q)
+        logging.debug("new setpoint differ from current states by dP: {}, dQ: {}".format(deltaP, deltaQ))
+
+        # FIXME maybe Check if enough power flexibility is available in the group
+        # maybe not, since i cna still try to allocata the most I can and then notify tvESR that not everything has been done
+
+        power_allocation = self._allocate_power_deltas(groupId, deltaP, deltaQ)
+        '''
+        power_allocation should be a dictionary where the keys are the device id selected to enforce the setpoint.
+        The values are composed by dict with a "P" and a "Q" keys, indicating the new power setpoint (not delta) for the 
+        device
+        '''
+        if power_allocation is None:
+            logger.error("Unable to allocate dP: {}, dQ: {} in group {}".format(deltaP, deltaQ, groupId))
+            return 2, "Unable to allocate dP: {}, dQ: {} in group {}".format(deltaP, deltaQ, groupId)
+
+        for dev in power_allocation:
+            # prepare json object
+            jmsg = {
+                'devId': "0x{:04X}".format(dev),
+                'P': power_allocation[dev]['P'],
+                'Q': power_allocation[dev]['Q'],
+                'timestamp': ts
+            }
+
+            if self.send_message_to_dev(dev, jmsg) is not 0:
+                logger.error("failed sending message to device {}{:04X}".format(self.thing_prefix,dev))
+                return 1, "failed sending message to device {}{:04X}".format(self.thing_prefix,dev)
+
+        return 0, None
 
     def foreverloop(self):
         # connect to ditto through sse

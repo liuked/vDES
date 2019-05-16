@@ -22,7 +22,7 @@ def runrest(api_port, _vdes):
 
     api.add_resource(Groups, "/groups/<string:groupId>")
     api.add_resource(GroupAggregator, "/groups/<string:groupId>/aggregated")
-    api.add_resource(GroupMessanger, "/groups/<string:groupId>/setpoint")
+    api.add_resource(GroupMessenger, "/groups/<string:groupId>/setpoint")
     api.add_resource(GroupAggregatorUpdate, "/groups/<string:groupId>/aggregated-update")
     api.add_resource(Devices, "/groups/<string:groupId>/devices/<string:devId>")
 
@@ -57,7 +57,7 @@ class Groups(Resource):
             vdes.lock.release()
 
 
-class GroupMessanger(Resource):
+class GroupMessenger(Resource):
 
     '''
     vDES receives from vESR json data in the format:
@@ -72,6 +72,7 @@ class GroupMessanger(Resource):
     //message for accumulated pSet and qSet for F1
     '''
     def put(self, groupId):
+        logger.debug("receiving PUT request")
         prs = reqparse.RequestParser()
         prs.add_argument("id")
         prs.add_argument("pSet")
@@ -79,30 +80,31 @@ class GroupMessanger(Resource):
         prs.add_argument("timestamp")
         a = prs.parse_args()
 
-        if a.id != groupId:
-            logger.error("group id doesn't correspond")
-            abort(400, descriprion="unmatching groupID")
+        logger.debug("request arguments: {}".format(a))
 
-        # prepare json object
-        jmsg = {
-            'devId': a.id,
-            'P': a.pSet,
-            'Q': a.qSet,
-            'timestamp': a.timestamp
-        }
+        id = str(a['id'])
+        pSet = int(a['pSet'])
+        qSet = int(a['qSet'])
+        timestamp = int(a['timestamp'])
+
+        if id != groupId:
+            logger.error("group id doesn't correspond")
+            abort(400)
 
         vdes.lock.acquire()
         try:
             if id in vdes.lvgroups:
-                group = vdes.lvgroups[id]
-                for dev in group.devs:
-                    vdes.send_message_to_dev(dev, jmsg)
+                # group = vdes.lvgroups[id]
+                [rcode, rmsg] = vdes.resolve_aggregated_setpoint(id, P=pSet, Q=qSet, ts=timestamp)
+
+                if rcode is not 0:
+                    logger.error("Unable to enforce setpoint due to: "+str(rcode)+" - "+rmsg)
+                    return "Unable to enforce setpoint due to: "+str(rcode)+" - "+rmsg, 400
 
             else:
                 abort(404)
         finally:
             vdes.lock.release()
-
 
 
 class GroupAggregator(Resource):
